@@ -1,0 +1,64 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(120% 120% at 20% 20%, #1f1b2e 0%, #0f1118 55%, #07080d 100%);
+  color: #d7e0ff;
+  font-family: "IBM Plex Mono", "Fira Code", monospace;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.viewport {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#game {
+  width: 100vw;
+  height: 100vh;
+  max-width: calc(100vh * (16 / 9));
+  max-height: calc(100vw * (9 / 16));
+  display: block;
+  background: #1b0f1c;
+  image-rendering: pixelated;
+}
+
+.hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  backdrop-filter: blur(6px);
+}
+
+.title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.meta {
+  font-size: 0.8rem;
+  color: #93a3c2;
+}
+
+code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 5px;
+  border-radius: 6px;
+  color: #e6f0ff;
+}
