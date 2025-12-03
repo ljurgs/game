@@ -104,7 +104,7 @@ class Character {
     this.x = canvas.width / 2;
     this.y = canvas.height / 2;
     this.speed = 120; // pixels per second
-    this.scale = 2.5;
+    this.scale = 1.5;
 
     // Column layout rows: 0=down,1=left,2=right,3=up
     this.frameIndex = 0;
@@ -120,7 +120,7 @@ class Character {
     this.arrowRows = 4;
     this.arrowFrameWidth = arrowImage.width / this.arrowColumns;
     this.arrowFrameHeight = arrowImage.height / this.arrowRows;
-    this.arrowScale = 1.6;
+    this.arrowScale = 0.75;
   }
 
   update(dtMs, inputState) {
@@ -286,6 +286,92 @@ class Character {
   }
 }
 
+class Cat {
+  constructor(image) {
+    this.image = image;
+    this.columns = 1;
+    this.rows = 4;
+    this.frameWidth = image.width / this.columns;
+    this.frameHeight = image.height / this.rows;
+
+    // Random start position
+    this.x = Math.random() * canvas.width;
+    this.y = Math.random() * canvas.height;
+    
+    this.speed = 50; 
+    this.scale = 0.75; 
+
+    this.frameIndex = 3; // Default down
+    this.target = null;
+    this.idleTime = 0;
+    this.facing = 'down';
+  }
+
+  update(dtMs) {
+    const dt = dtMs / 1000;
+    
+    if (this.target) {
+      const dx = this.target.x - this.x;
+      const dy = this.target.y - this.y;
+      const dist = Math.hypot(dx, dy);
+      
+      if (dist < 5) {
+        this.target = null;
+        this.idleTime = 1000 + Math.random() * 2000; 
+      } else {
+        // Move
+        const moveDist = this.speed * dt;
+        this.x += (dx / dist) * moveDist;
+        this.y += (dy / dist) * moveDist;
+        
+        // Face direction
+        if (Math.abs(dx) > Math.abs(dy)) {
+            this.facing = dx > 0 ? 'right' : 'left';
+        } else {
+            this.facing = dy > 0 ? 'down' : 'up';
+        }
+      }
+    } else {
+      this.idleTime -= dtMs;
+      if (this.idleTime <= 0) {
+        // Pick new target
+        const margin = 50;
+        this.target = {
+            x: margin + Math.random() * (canvas.width - 2 * margin),
+            y: margin + Math.random() * (canvas.height - 2 * margin)
+        };
+      }
+    }
+    
+    // Keep in bounds
+    this.x = Math.max(0, Math.min(canvas.width, this.x));
+    this.y = Math.max(0, Math.min(canvas.height, this.y));
+  }
+
+  draw(context) {
+    // Map facing to row: Down=0, Left=1, Right=2, Up=3
+    const rowMap = { down: 0, left: 1, right: 2, up: 3 };
+    const row = rowMap[this.facing];
+    
+    const sx = 0;
+    const sy = row * this.frameHeight;
+    const dWidth = this.frameWidth * this.scale;
+    const dHeight = this.frameHeight * this.scale;
+    
+    context.drawImage(
+      this.image, 
+      sx, 
+      sy, 
+      this.frameWidth, 
+      this.frameHeight, 
+      this.x - dWidth / 2, 
+      this.y - dHeight / 2, 
+      dWidth, 
+      dHeight
+    );
+  }
+}
+
 function start() {
   resizeCanvas();
   const loadImage = (src) =>
@@ -299,8 +385,10 @@ function start() {
   Promise.all([
     loadImage("/assets/sprites/sheet_f_hair_1.png"),
     loadImage("/assets/sprites/arrow_dir_green.png"),
-  ]).then(([sprite, arrow]) => {
+    loadImage("/assets/sprites/cat_black.png"),
+  ]).then(([sprite, arrow, catSprite]) => {
     const hero = new Character(sprite, arrow);
+    const cat = new Cat(catSprite);
     let lastTime = performance.now();
 
     function loop(now) {
@@ -311,7 +399,10 @@ function start() {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       hero.update(delta, input);
-      hero.draw(ctx);
+      cat.update(delta);
+
+      const objects = [hero, cat].sort((a, b) => a.y - b.y);
+      objects.forEach(obj => obj.draw(ctx));
 
       requestAnimationFrame(loop);
     }
