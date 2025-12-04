@@ -3,7 +3,6 @@ import "./style.css";
 
 const WORLD_WIDTH = 1280;
 const WORLD_HEIGHT = 720;
-const HYSTERESIS_DOT = 0.97;
 
 const DIRECTIONS = [
   { name: "up", x: 0, y: -1 },
@@ -41,54 +40,21 @@ class MobileObject {
     this.sprite.setOrigin(0.5, 0.5);
 
     this.displayDir = null;
-    this.pendingDir = null;
-    this.pendingTimerMs = 0;
-    this.pendingWaitMs = 120;
   }
 
   setPosition(x, y) {
     this.sprite.setPosition(x, y);
   }
 
-  updateDirection(snapped, dtMs) {
-    let changed = false;
-    if (!snapped) {
-      this.pendingDir = null;
-      this.pendingTimerMs = 0;
-      return false;
-    }
-
-    if (!this.displayDir) {
-      this.displayDir = snapped;
-      return true;
-    }
-
-    const dot = this.displayDir.x * snapped.x + this.displayDir.y * snapped.y;
-    if (dot < HYSTERESIS_DOT) {
-      if (!this.pendingDir || this.pendingDir.name !== snapped.name) {
-        this.pendingDir = snapped;
-        this.pendingTimerMs = this.pendingWaitMs;
-      } else {
-        this.pendingTimerMs -= dtMs;
-        if (this.pendingTimerMs <= 0) {
-          this.displayDir = this.pendingDir;
-          this.pendingDir = null;
-          this.pendingTimerMs = 0;
-          changed = true;
-        }
-      }
-    } else {
-      this.pendingDir = null;
-      this.pendingTimerMs = 0;
-    }
-
+  setDirection(snapped) {
+    if (!snapped) return false;
+    const changed = !this.displayDir || this.displayDir.name !== snapped.name;
+    this.displayDir = snapped;
     return changed;
   }
 
   resetDirection() {
     this.displayDir = null;
-    this.pendingDir = null;
-    this.pendingTimerMs = 0;
   }
 
   clampToWorld() {
@@ -106,13 +72,6 @@ class Character extends MobileObject {
 
     this.speed = 120;
     this.displayDir = { name: "down", x: 0, y: 1 };
-
-    this.arrow = scene.add.sprite(x, y, "arrow", 0);
-    this.arrow.setOrigin(0.5, 0.5);
-    this.arrow.setScale(0.8);
-    this.arrow.setVisible(false);
-    this.arrowTimerMs = 0;
-    this.arrowDurationMs = 250;
   }
 
   update(dtMs, inputState) {
@@ -136,36 +95,38 @@ class Character extends MobileObject {
         moveDir = snapped;
       }
     } else if (inputState.pointer) {
-      const dx = inputState.pointer.x - this.sprite.x;
-      const dy = inputState.pointer.y - this.sprite.y;
+      const currentSegment = inputState.pointer.segments[0];
+      if (!currentSegment) {
+        inputState.clearPointer();
+        return;
+      }
+      const dx = currentSegment.x - this.sprite.x;
+      const dy = currentSegment.y - this.sprite.y;
       const dist = Math.hypot(dx, dy);
       if (dist < 2) {
-        inputState.clearPointer();
-      } else {
-        const snapped = snapDirection(dx, dy);
-        if (snapped) {
-          const step = this.speed * dt;
-          if (dist <= step) {
-            this.sprite.x = inputState.pointer.x;
-            this.sprite.y = inputState.pointer.y;
-            inputState.clearPointer();
-          } else {
-            this.sprite.x += snapped.x * step;
-            this.sprite.y += snapped.y * step;
-          }
-          moveDir = snapped;
+        inputState.pointer.segments.shift();
+        if (inputState.pointer.segments.length === 0) {
+          inputState.clearPointer();
         }
+      } else {
+        const snapped = currentSegment.dir;
+        const step = this.speed * dt;
+        if (dist <= step) {
+          this.sprite.x = currentSegment.x;
+          this.sprite.y = currentSegment.y;
+          inputState.pointer.segments.shift();
+          if (inputState.pointer.segments.length === 0) {
+            inputState.clearPointer();
+          }
+        } else {
+          this.sprite.x += snapped.x * step;
+          this.sprite.y += snapped.y * step;
+        }
+        moveDir = snapped;
       }
     }
 
-    const changed = moveDir ? this.updateDirection(moveDir, dtMs) : false;
-    if (changed) {
-      this.arrowTimerMs = this.arrowDurationMs;
-    }
-
-    if (this.arrowTimerMs > 0) {
-      this.arrowTimerMs = Math.max(0, this.arrowTimerMs - dtMs);
-    }
+    const changed = moveDir ? this.setDirection(moveDir) : false;
 
     this.clampToWorld();
 
@@ -181,27 +142,6 @@ class Character extends MobileObject {
         : 3;
     this.sprite.setFrame(rowIndex);
 
-    // Arrow indicator for direction changes
-    if (this.arrowTimerMs > 0) {
-      const vec = this.displayDir || { x: 1, y: 0 };
-      const arrowRow =
-        Math.abs(vec.x) > Math.abs(vec.y)
-          ? vec.x > 0
-            ? 2
-            : 1
-          : vec.y > 0
-          ? 0
-          : 3;
-      const offset = (this.sprite.height * this.sprite.scaleY) / 2 + (this.arrow.height * this.arrow.scaleY) / 2 + 6;
-      const mag = Math.hypot(vec.x, vec.y) || 1;
-      const ox = (vec.x / mag) * offset;
-      const oy = (vec.y / mag) * offset;
-      this.arrow.setFrame(arrowRow);
-      this.arrow.setPosition(Math.round(this.sprite.x + ox), Math.round(this.sprite.y + oy));
-      this.arrow.setVisible(true);
-    } else {
-      this.arrow.setVisible(false);
-    }
   }
 }
 
@@ -231,7 +171,7 @@ class Cat extends MobileObject {
       } else {
         const snapped = snapDirection(dx, dy);
         if (snapped) {
-          this.updateDirection(snapped, dtMs);
+          this.setDirection(snapped);
 
           const moveVec = this.displayDir || snapped;
           const moveDist = this.speed * dt;
@@ -305,7 +245,6 @@ class PlayScene extends Phaser.Scene {
   preload() {
     this.load.spritesheet("hero", "/assets/sprites/sheet_f_hair_1.png", { frameWidth: 32, frameHeight: 32 });
     this.load.spritesheet("cat", "/assets/sprites/sheet_cat_black.png", { frameWidth: 128, frameHeight: 128 });
-    this.load.spritesheet("arrow", "/assets/sprites/arrow_dir_green.png", { frameWidth: 32, frameHeight: 32 });
   }
 
   create() {
@@ -319,18 +258,49 @@ class PlayScene extends Phaser.Scene {
       d: Phaser.Input.Keyboard.KeyCodes.D,
     });
 
-    this.pointerTarget = null;
-    this.input.on("pointerdown", (pointer) => {
-      const worldPoint = pointer.positionToCamera(this.cameras.main);
-      this.pointerTarget = { x: worldPoint.x, y: worldPoint.y };
-    });
-
     this.character = new Character(this, WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
     this.cat = new Cat(
       this,
       Phaser.Math.Between(100, WORLD_WIDTH - 100),
       Phaser.Math.Between(100, WORLD_HEIGHT - 100)
     );
+
+    this.pointerTarget = null;
+    this.input.on("pointerdown", (pointer) => {
+      const worldPoint = pointer.positionToCamera(this.cameras.main);
+      const startX = this.character.sprite.x;
+      const startY = this.character.sprite.y;
+      const dx = worldPoint.x - startX;
+      const dy = worldPoint.y - startY;
+
+      const sign = (v) => (v >= 0 ? 1 : -1);
+      const segments = [];
+      let cx = startX;
+      let cy = startY;
+
+      const diagAxis = Math.min(Math.abs(dx), Math.abs(dy));
+      if (diagAxis > 0) {
+        const dir = snapDirection(sign(dx), sign(dy));
+        cx += sign(dx) * diagAxis;
+        cy += sign(dy) * diagAxis;
+        segments.push({ x: cx, y: cy, dir });
+      }
+
+      const remX = Math.abs(dx) - diagAxis;
+      const remY = Math.abs(dy) - diagAxis;
+      if (remX > 0) {
+        const dir = snapDirection(sign(dx), 0);
+        cx += sign(dx) * remX;
+        segments.push({ x: cx, y: cy, dir });
+      } else if (remY > 0) {
+        const dir = snapDirection(0, sign(dy));
+        cy += sign(dy) * remY;
+        segments.push({ x: cx, y: cy, dir });
+      }
+
+      if (segments.length === 0) return;
+      this.pointerTarget = { segments };
+    });
   }
 
   update(_time, delta) {
