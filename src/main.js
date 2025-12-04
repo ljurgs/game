@@ -290,21 +290,37 @@ class Cat {
   constructor(image) {
     this.image = image;
     this.columns = 1;
-    this.rows = 4;
+    this.rows = 8;
     this.frameWidth = image.width / this.columns;
     this.frameHeight = image.height / this.rows;
+    this.directionRows = {
+      up: 0,
+      upRight: 1,
+      right: 2,
+      downRight: 3,
+      down: 4,
+      downLeft: 5,
+      left: 6,
+      upLeft: 7,
+    };
 
     // Random start position
     this.x = Math.random() * canvas.width;
     this.y = Math.random() * canvas.height;
     
     this.speed = 50; 
-    this.scale = 0.75; 
+    this.scale = 0.5; 
 
-    this.frameIndex = 3; // Default down
+    this.frameIndex = 4; // Default down row in the sheet
     this.target = null;
     this.idleTime = 0;
     this.facing = 'down';
+    this.displayDir = null;
+    this.pendingDir = null;
+    this.pendingTimerMs = 0;
+    this.pendingWaitMs = 120;
+    this.margin = 50;
+    this.minLegDist = 80;
   }
 
   update(dtMs) {
@@ -318,28 +334,87 @@ class Cat {
       if (dist < 5) {
         this.target = null;
         this.idleTime = 1000 + Math.random() * 2000; 
+        this.displayDir = null;
+        this.pendingDir = null;
+        this.pendingTimerMs = 0;
       } else {
-        // Move
-        const moveDist = this.speed * dt;
-        this.x += (dx / dist) * moveDist;
-        this.y += (dy / dist) * moveDist;
-        
-        // Face direction
-        if (Math.abs(dx) > Math.abs(dy)) {
-            this.facing = dx > 0 ? 'right' : 'left';
-        } else {
-            this.facing = dy > 0 ? 'down' : 'up';
+        // Move locked to 8 directions
+        const snapped = snapDirection(dx, dy);
+        if (snapped) {
+          if (!this.displayDir) {
+            this.displayDir = snapped;
+          } else {
+            const dot = this.displayDir.x * snapped.x + this.displayDir.y * snapped.y;
+            if (dot < HYSTERESIS_DOT) {
+              if (!this.pendingDir || this.pendingDir.name !== snapped.name) {
+                this.pendingDir = snapped;
+                this.pendingTimerMs = this.pendingWaitMs;
+              } else {
+                this.pendingTimerMs -= dtMs;
+                if (this.pendingTimerMs <= 0) {
+                  this.displayDir = this.pendingDir;
+                  this.pendingDir = null;
+                  this.pendingTimerMs = 0;
+                }
+              }
+            } else {
+              this.pendingDir = null;
+              this.pendingTimerMs = 0;
+            }
+          }
+
+          const moveVec = this.displayDir || snapped;
+          const moveDist = this.speed * dt;
+          if (dist <= moveDist) {
+            this.x = this.target.x;
+            this.y = this.target.y;
+            this.target = null;
+            this.idleTime = 1000 + Math.random() * 2000;
+            this.displayDir = null;
+            this.pendingDir = null;
+            this.pendingTimerMs = 0;
+          } else {
+            this.x += moveVec.x * moveDist;
+            this.y += moveVec.y * moveDist;
+          }
+          this.facing = moveVec.name;
         }
       }
     } else {
       this.idleTime -= dtMs;
       if (this.idleTime <= 0) {
-        // Pick new target
-        const margin = 50;
-        this.target = {
-            x: margin + Math.random() * (canvas.width - 2 * margin),
-            y: margin + Math.random() * (canvas.height - 2 * margin)
+        // Pick new target constrained to 8-way straight paths
+        const pickTarget = () => {
+          for (let i = 0; i < 8; i++) {
+            const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
+            const maxX = dir.x > 0
+              ? (canvas.width - this.margin - this.x) / dir.x
+              : dir.x < 0
+                ? (this.margin - this.x) / dir.x
+                : Infinity;
+            const maxY = dir.y > 0
+              ? (canvas.height - this.margin - this.y) / dir.y
+              : dir.y < 0
+                ? (this.margin - this.y) / dir.y
+                : Infinity;
+            const maxDist = Math.min(
+              Number.isFinite(maxX) ? maxX : Infinity,
+              Number.isFinite(maxY) ? maxY : Infinity
+            );
+            if (maxDist > this.minLegDist) {
+              const dist = this.minLegDist + Math.random() * (maxDist - this.minLegDist);
+              return {
+                x: this.x + dir.x * dist,
+                y: this.y + dir.y * dist,
+              };
+            }
+          }
+          // Fallback to current spot to wait
+          return null;
         };
+
+        this.target = pickTarget();
+        this.idleTime = this.target ? 0 : 500;
       }
     }
     
@@ -349,14 +424,14 @@ class Cat {
   }
 
   draw(context) {
-    // Map facing to row: Down=0, Left=1, Right=2, Up=3
-    const rowMap = { down: 0, left: 1, right: 2, up: 3 };
-    const row = rowMap[this.facing];
+    const row = this.directionRows[this.facing] ?? this.directionRows.down;
     
     const sx = 0;
     const sy = row * this.frameHeight;
     const dWidth = this.frameWidth * this.scale;
     const dHeight = this.frameHeight * this.scale;
+    const dx = Math.round(this.x - dWidth / 2);
+    const dy = Math.round(this.y - dHeight / 2);
     
     context.drawImage(
       this.image, 
@@ -364,8 +439,8 @@ class Cat {
       sy, 
       this.frameWidth, 
       this.frameHeight, 
-      this.x - dWidth / 2, 
-      this.y - dHeight / 2, 
+      dx, 
+      dy, 
       dWidth, 
       dHeight
     );
@@ -385,7 +460,7 @@ function start() {
   Promise.all([
     loadImage("/assets/sprites/sheet_f_hair_1.png"),
     loadImage("/assets/sprites/arrow_dir_green.png"),
-    loadImage("/assets/sprites/cat_black.png"),
+    loadImage("/assets/sprites/sheet_cat_black.png"),
   ]).then(([sprite, arrow, catSprite]) => {
     const hero = new Character(sprite, arrow);
     const cat = new Cat(catSprite);
@@ -400,6 +475,23 @@ function start() {
 
       hero.update(delta, input);
       cat.update(delta);
+
+      // Simple circle collision resolution
+      const dx = hero.x - cat.x;
+      const dy = hero.y - cat.y;
+      const dist = Math.hypot(dx, dy);
+      // Approximate radius as 1/4 of the scaled width
+      const r1 = (hero.frameWidth * hero.scale) * 0.25;
+      const r2 = (cat.frameWidth * cat.scale) * 0.25;
+      const minDist = r1 + r2;
+
+      if (dist < minDist) {
+        const push = minDist - dist;
+        const angle = Math.atan2(dy, dx);
+        // Push hero away from cat
+        hero.x += Math.cos(angle) * push;
+        hero.y += Math.sin(angle) * push;
+      }
 
       const objects = [hero, cat].sort((a, b) => a.y - b.y);
       objects.forEach(obj => obj.draw(ctx));
