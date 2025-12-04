@@ -1,43 +1,19 @@
+import Phaser from "phaser";
 import "./style.css";
 
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-ctx.imageSmoothingEnabled = false;
-const viewport = document.querySelector(".viewport");
-
-const resizeCanvas = () => {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const targetRatio = 16 / 9;
-  let w = vw;
-  let h = Math.floor(vw / targetRatio);
-  if (h > vh) {
-    h = vh;
-    w = Math.floor(vh * targetRatio);
-  }
-  if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
-    canvas.width = w;
-    canvas.height = h;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-    ctx.imageSmoothingEnabled = false;
-  }
-};
-
-const input = {
-  keys: {},
-  target: null,
-};
+const WORLD_WIDTH = 1280;
+const WORLD_HEIGHT = 720;
+const HYSTERESIS_DOT = 0.97;
 
 const DIRECTIONS = [
-  { name: "right", x: 1, y: 0 },
-  { name: "upRight", x: Math.SQRT1_2, y: -Math.SQRT1_2 },
   { name: "up", x: 0, y: -1 },
-  { name: "upLeft", x: -Math.SQRT1_2, y: -Math.SQRT1_2 },
-  { name: "left", x: -1, y: 0 },
-  { name: "downLeft", x: -Math.SQRT1_2, y: Math.SQRT1_2 },
-  { name: "down", x: 0, y: 1 },
+  { name: "upRight", x: Math.SQRT1_2, y: -Math.SQRT1_2 },
+  { name: "right", x: 1, y: 0 },
   { name: "downRight", x: Math.SQRT1_2, y: Math.SQRT1_2 },
+  { name: "down", x: 0, y: 1 },
+  { name: "downLeft", x: -Math.SQRT1_2, y: Math.SQRT1_2 },
+  { name: "left", x: -1, y: 0 },
+  { name: "upLeft", x: -Math.SQRT1_2, y: -Math.SQRT1_2 },
 ];
 
 const snapDirection = (dx, dy) => {
@@ -57,70 +33,86 @@ const snapDirection = (dx, dy) => {
   return best;
 };
 
-const HYSTERESIS_DOT = 0.97; // require larger change before switching snapped direction
+class MobileObject {
+  constructor(scene, spriteKey, frame, scale) {
+    this.scene = scene;
+    this.sprite = scene.add.sprite(0, 0, spriteKey, frame);
+    this.sprite.setScale(scale);
+    this.sprite.setOrigin(0.5, 0.5);
 
-const facingFromVector = (dx, dy) => {
-  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return "up";
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx > 0 ? "right" : "left";
-  }
-  return dy > 0 ? "down" : "up";
-};
-
-window.addEventListener("keydown", (e) => {
-  const key = e.key.toLowerCase();
-  if (["w", "a", "s", "d"].includes(key)) {
-    input.keys[key] = true;
-    e.preventDefault();
-  }
-});
-
-window.addEventListener("keyup", (e) => {
-  const key = e.key.toLowerCase();
-  if (["w", "a", "s", "d"].includes(key)) {
-    input.keys[key] = false;
-    e.preventDefault();
-  }
-});
-
-canvas.addEventListener("click", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  input.target = {
-    x: e.clientX - rect.left,
-    y: e.clientY - rect.top,
-  };
-});
-
-class Character {
-  constructor(image, arrowImage) {
-    this.image = image;
-    this.arrowImage = arrowImage;
-    this.columns = 1;
-    this.rows = 4;
-    this.frameWidth = image.width / this.columns;
-    this.frameHeight = image.height / this.rows;
-    this.totalFrames = this.columns * this.rows;
-
-    this.x = canvas.width / 2;
-    this.y = canvas.height / 2;
-    this.speed = 120; // pixels per second
-    this.scale = 1.5;
-
-    // Column layout rows: 0=down,1=left,2=right,3=up
-    this.frameIndex = 0;
-    this.moving = false;
-    this.displayDir = { name: "down", x: 0, y: 1 };
+    this.displayDir = null;
     this.pendingDir = null;
     this.pendingTimerMs = 0;
     this.pendingWaitMs = 120;
-    this.indicatorTimerMs = 0;
-    this.indicatorDurationMs = 250;
+  }
 
-    this.arrowColumns = 1;
-    this.arrowRows = 4;
-    this.arrowFrameWidth = arrowImage.width / this.arrowColumns;
-    this.arrowFrameHeight = arrowImage.height / this.arrowRows;
-    this.arrowScale = 0.75;
+  setPosition(x, y) {
+    this.sprite.setPosition(x, y);
+  }
+
+  updateDirection(snapped, dtMs) {
+    let changed = false;
+    if (!snapped) {
+      this.pendingDir = null;
+      this.pendingTimerMs = 0;
+      return false;
+    }
+
+    if (!this.displayDir) {
+      this.displayDir = snapped;
+      return true;
+    }
+
+    const dot = this.displayDir.x * snapped.x + this.displayDir.y * snapped.y;
+    if (dot < HYSTERESIS_DOT) {
+      if (!this.pendingDir || this.pendingDir.name !== snapped.name) {
+        this.pendingDir = snapped;
+        this.pendingTimerMs = this.pendingWaitMs;
+      } else {
+        this.pendingTimerMs -= dtMs;
+        if (this.pendingTimerMs <= 0) {
+          this.displayDir = this.pendingDir;
+          this.pendingDir = null;
+          this.pendingTimerMs = 0;
+          changed = true;
+        }
+      }
+    } else {
+      this.pendingDir = null;
+      this.pendingTimerMs = 0;
+    }
+
+    return changed;
+  }
+
+  resetDirection() {
+    this.displayDir = null;
+    this.pendingDir = null;
+    this.pendingTimerMs = 0;
+  }
+
+  clampToWorld() {
+    const halfW = (this.sprite.width * this.sprite.scaleX) / 2;
+    const halfH = (this.sprite.height * this.sprite.scaleY) / 2;
+    this.sprite.x = Phaser.Math.Clamp(this.sprite.x, halfW, WORLD_WIDTH - halfW);
+    this.sprite.y = Phaser.Math.Clamp(this.sprite.y, halfH, WORLD_HEIGHT - halfH);
+  }
+}
+
+class Character extends MobileObject {
+  constructor(scene, x, y) {
+    super(scene, "hero", 0, 1.5);
+    this.setPosition(x, y);
+
+    this.speed = 120;
+    this.displayDir = { name: "down", x: 0, y: 1 };
+
+    this.arrow = scene.add.sprite(x, y, "arrow", 0);
+    this.arrow.setOrigin(0.5, 0.5);
+    this.arrow.setScale(0.8);
+    this.arrow.setVisible(false);
+    this.arrowTimerMs = 0;
+    this.arrowDurationMs = 250;
   }
 
   update(dtMs, inputState) {
@@ -128,172 +120,169 @@ class Character {
     const dir = { x: 0, y: 0 };
     let moveDir = null;
 
-    if (inputState.keys.w) dir.y -= 1;
-    if (inputState.keys.s) dir.y += 1;
-    if (inputState.keys.a) dir.x -= 1;
-    if (inputState.keys.d) dir.x += 1;
+    if (inputState.keys.w.isDown) dir.y -= 1;
+    if (inputState.keys.s.isDown) dir.y += 1;
+    if (inputState.keys.a.isDown) dir.x -= 1;
+    if (inputState.keys.d.isDown) dir.x += 1;
 
     const usingKeys = dir.x !== 0 || dir.y !== 0;
 
     if (usingKeys) {
-      inputState.target = null; // keyboard takes control from click
+      inputState.clearPointer();
       const snapped = snapDirection(dir.x, dir.y);
       if (snapped) {
-        this.x += snapped.x * this.speed * dt;
-        this.y += snapped.y * this.speed * dt;
-        dir.x = snapped.x;
-        dir.y = snapped.y;
-        dir.name = snapped.name;
+        this.sprite.x += snapped.x * this.speed * dt;
+        this.sprite.y += snapped.y * this.speed * dt;
         moveDir = snapped;
       }
-    } else if (inputState.target) {
-      const dx = inputState.target.x - this.x;
-      const dy = inputState.target.y - this.y;
+    } else if (inputState.pointer) {
+      const dx = inputState.pointer.x - this.sprite.x;
+      const dy = inputState.pointer.y - this.sprite.y;
       const dist = Math.hypot(dx, dy);
       if (dist < 2) {
-        inputState.target = null;
+        inputState.clearPointer();
       } else {
         const snapped = snapDirection(dx, dy);
         if (snapped) {
           const step = this.speed * dt;
           if (dist <= step) {
-            this.x = inputState.target.x;
-            this.y = inputState.target.y;
-            inputState.target = null;
+            this.sprite.x = inputState.pointer.x;
+            this.sprite.y = inputState.pointer.y;
+            inputState.clearPointer();
           } else {
-            this.x += snapped.x * step;
-            this.y += snapped.y * step;
+            this.sprite.x += snapped.x * step;
+            this.sprite.y += snapped.y * step;
           }
-          dir.x = snapped.x;
-          dir.y = snapped.y;
-          dir.name = snapped.name;
           moveDir = snapped;
         }
       }
     }
 
-    this.moving = usingKeys || Boolean(inputState.target);
-
-    if (moveDir) {
-      const current = this.displayDir;
-      const dot = current ? moveDir.x * current.x + moveDir.y * current.y : -1;
-      if (!current || dot < HYSTERESIS_DOT) {
-        const pendDot = this.pendingDir ? (moveDir.x * this.pendingDir.x + moveDir.y * this.pendingDir.y) : -1;
-        if (!this.pendingDir || pendDot < HYSTERESIS_DOT) {
-          this.pendingDir = { name: moveDir.name, x: moveDir.x, y: moveDir.y };
-          this.pendingTimerMs = this.pendingWaitMs;
-        } else {
-          // same pending direction; keep timer
-        }
-      } else {
-        // movement close to current display dir; clear pending
-        this.pendingDir = null;
-        this.pendingTimerMs = 0;
-      }
-    } else {
-      this.pendingDir = null;
-      this.pendingTimerMs = 0;
+    const changed = moveDir ? this.updateDirection(moveDir, dtMs) : false;
+    if (changed) {
+      this.arrowTimerMs = this.arrowDurationMs;
     }
 
-    if (this.pendingDir) {
-      this.pendingTimerMs -= dtMs;
-      if (this.pendingTimerMs <= 0) {
-        this.displayDir = { ...this.pendingDir };
-        this.pendingDir = null;
-        this.indicatorTimerMs = this.indicatorDurationMs;
-      }
+    if (this.arrowTimerMs > 0) {
+      this.arrowTimerMs = Math.max(0, this.arrowTimerMs - dtMs);
     }
 
-    const facing = facingFromVector(this.displayDir.x, this.displayDir.y);
-    const charIndex = { down: 0, left: 1, right: 2, up: 3 }[facing];
-    this.frameIndex = charIndex ?? this.frameIndex;
+    this.clampToWorld();
 
-    // Clamp to canvas bounds
-    this.x = Math.max(this.frameWidth * this.scale / 2, Math.min(canvas.width - this.frameWidth * this.scale / 2, this.x));
-    this.y = Math.max(this.frameHeight * this.scale / 2, Math.min(canvas.height - this.frameHeight * this.scale / 2, this.y));
+    // Set frame by facing
+    const facing = this.displayDir || { name: "down", x: 0, y: 1 };
+    const rowIndex =
+      facing.name === "down"
+        ? 0
+        : facing.name === "left"
+        ? 1
+        : facing.name === "right"
+        ? 2
+        : 3;
+    this.sprite.setFrame(rowIndex);
 
-    if (this.indicatorTimerMs > 0) {
-      this.indicatorTimerMs = Math.max(0, this.indicatorTimerMs - dtMs);
-    }
-  }
-
-  draw(context) {
-    const col = this.frameIndex % this.columns;
-    const row = Math.floor(this.frameIndex / this.columns);
-    const sx = col * this.frameWidth;
-    const sy = row * this.frameHeight;
-    const drawWidth = this.frameWidth * this.scale;
-    const drawHeight = this.frameHeight * this.scale;
-
-    context.drawImage(
-      this.image,
-      sx,
-      sy,
-      this.frameWidth,
-      this.frameHeight,
-      this.x - drawWidth / 2,
-      this.y - drawHeight / 2,
-      drawWidth,
-      drawHeight
-    );
-
-    if (this.indicatorTimerMs > 0) {
-      const drawArrow = (dirName, vec) => {
-        const row = { down: 0, left: 1, right: 2, up: 3 }[dirName];
-        if (row === undefined) return;
-        const sx = 0;
-        const sy = row * this.arrowFrameHeight;
-        const drawW = this.arrowFrameWidth * this.arrowScale;
-        const drawH = this.arrowFrameHeight * this.arrowScale;
-        const mag = Math.hypot(vec.x, vec.y) || 1;
-        const offset = (this.frameHeight * this.scale) / 2 + (drawH / 2) + 6;
-        const ox = (vec.x / mag) * offset;
-        const oy = (vec.y / mag) * offset;
-
-        context.drawImage(
-          this.arrowImage,
-          sx,
-          sy,
-          this.arrowFrameWidth,
-          this.arrowFrameHeight,
-          this.x - drawW / 2 + ox,
-          this.y - drawH / 2 + oy,
-          drawW,
-          drawH
-        );
-      };
-
+    // Arrow indicator for direction changes
+    if (this.arrowTimerMs > 0) {
       const vec = this.displayDir || { x: 1, y: 0 };
-      if (Math.abs(vec.x) > 0.001 && Math.abs(vec.y) > 0.001) {
-        // diagonal: draw both axis arrows
-        const dirs = [];
-        dirs.push(vec.y > 0 ? "down" : "up");
-        dirs.push(vec.x > 0 ? "right" : "left");
-        dirs.forEach((name) => {
-          const v = name === "up" ? { x: 0, y: -1 }
-            : name === "down" ? { x: 0, y: 1 }
-            : name === "left" ? { x: -1, y: 0 }
-            : { x: 1, y: 0 };
-          drawArrow(name, v);
-        });
-      } else {
-        const name = Math.abs(vec.y) > Math.abs(vec.x)
-          ? (vec.y > 0 ? "down" : "up")
-          : (vec.x > 0 ? "right" : "left");
-        drawArrow(name, vec);
-      }
+      const arrowRow =
+        Math.abs(vec.x) > Math.abs(vec.y)
+          ? vec.x > 0
+            ? 2
+            : 1
+          : vec.y > 0
+          ? 0
+          : 3;
+      const offset = (this.sprite.height * this.sprite.scaleY) / 2 + (this.arrow.height * this.arrow.scaleY) / 2 + 6;
+      const mag = Math.hypot(vec.x, vec.y) || 1;
+      const ox = (vec.x / mag) * offset;
+      const oy = (vec.y / mag) * offset;
+      this.arrow.setFrame(arrowRow);
+      this.arrow.setPosition(Math.round(this.sprite.x + ox), Math.round(this.sprite.y + oy));
+      this.arrow.setVisible(true);
+    } else {
+      this.arrow.setVisible(false);
     }
   }
 }
 
-class Cat {
-  constructor(image) {
-    this.image = image;
-    this.columns = 1;
-    this.rows = 8;
-    this.frameWidth = image.width / this.columns;
-    this.frameHeight = image.height / this.rows;
-    this.directionRows = {
+class Cat extends MobileObject {
+  constructor(scene, x, y) {
+    super(scene, "cat", 4, 0.5);
+    this.setPosition(x, y);
+    this.speed = 50;
+    this.target = null;
+    this.idleTime = 0;
+    this.margin = 50;
+    this.minLegDist = 80;
+  }
+
+  update(dtMs) {
+    const dt = dtMs / 1000;
+
+    if (this.target) {
+      const dx = this.target.x - this.sprite.x;
+      const dy = this.target.y - this.sprite.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 5) {
+        this.target = null;
+        this.idleTime = 1000 + Math.random() * 2000;
+        this.resetDirection();
+      } else {
+        const snapped = snapDirection(dx, dy);
+        if (snapped) {
+          this.updateDirection(snapped, dtMs);
+
+          const moveVec = this.displayDir || snapped;
+          const moveDist = this.speed * dt;
+          if (dist <= moveDist) {
+            this.sprite.x = this.target.x;
+            this.sprite.y = this.target.y;
+            this.target = null;
+            this.idleTime = 1000 + Math.random() * 2000;
+            this.resetDirection();
+          } else {
+            this.sprite.x += moveVec.x * moveDist;
+            this.sprite.y += moveVec.y * moveDist;
+          }
+        }
+      }
+    } else {
+      this.idleTime -= dtMs;
+      if (this.idleTime <= 0) {
+        const pickTarget = () => {
+          for (let i = 0; i < 8; i++) {
+            const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
+            const maxX =
+              dir.x > 0
+                ? (WORLD_WIDTH - this.margin - this.sprite.x) / dir.x
+                : dir.x < 0
+                ? (this.margin - this.sprite.x) / dir.x
+                : Infinity;
+            const maxY =
+              dir.y > 0
+                ? (WORLD_HEIGHT - this.margin - this.sprite.y) / dir.y
+                : dir.y < 0
+                ? (this.margin - this.sprite.y) / dir.y
+                : Infinity;
+            const maxDist = Math.min(Number.isFinite(maxX) ? maxX : Infinity, Number.isFinite(maxY) ? maxY : Infinity);
+            if (maxDist > this.minLegDist) {
+              const dist = this.minLegDist + Math.random() * (maxDist - this.minLegDist);
+              return { x: this.sprite.x + dir.x * dist, y: this.sprite.y + dir.y * dist };
+            }
+          }
+          return null;
+        };
+
+        this.target = pickTarget();
+        this.idleTime = this.target ? 0 : 500;
+      }
+    }
+
+    this.clampToWorld();
+
+    // Face using sheet rows
+    const rowMap = {
       up: 0,
       upRight: 1,
       right: 2,
@@ -303,205 +292,85 @@ class Cat {
       left: 6,
       upLeft: 7,
     };
-
-    // Random start position
-    this.x = Math.random() * canvas.width;
-    this.y = Math.random() * canvas.height;
-    
-    this.speed = 50; 
-    this.scale = 0.5; 
-
-    this.frameIndex = 4; // Default down row in the sheet
-    this.target = null;
-    this.idleTime = 0;
-    this.facing = 'down';
-    this.displayDir = null;
-    this.pendingDir = null;
-    this.pendingTimerMs = 0;
-    this.pendingWaitMs = 120;
-    this.margin = 50;
-    this.minLegDist = 80;
-  }
-
-  update(dtMs) {
-    const dt = dtMs / 1000;
-    
-    if (this.target) {
-      const dx = this.target.x - this.x;
-      const dy = this.target.y - this.y;
-      const dist = Math.hypot(dx, dy);
-      
-      if (dist < 5) {
-        this.target = null;
-        this.idleTime = 1000 + Math.random() * 2000; 
-        this.displayDir = null;
-        this.pendingDir = null;
-        this.pendingTimerMs = 0;
-      } else {
-        // Move locked to 8 directions
-        const snapped = snapDirection(dx, dy);
-        if (snapped) {
-          if (!this.displayDir) {
-            this.displayDir = snapped;
-          } else {
-            const dot = this.displayDir.x * snapped.x + this.displayDir.y * snapped.y;
-            if (dot < HYSTERESIS_DOT) {
-              if (!this.pendingDir || this.pendingDir.name !== snapped.name) {
-                this.pendingDir = snapped;
-                this.pendingTimerMs = this.pendingWaitMs;
-              } else {
-                this.pendingTimerMs -= dtMs;
-                if (this.pendingTimerMs <= 0) {
-                  this.displayDir = this.pendingDir;
-                  this.pendingDir = null;
-                  this.pendingTimerMs = 0;
-                }
-              }
-            } else {
-              this.pendingDir = null;
-              this.pendingTimerMs = 0;
-            }
-          }
-
-          const moveVec = this.displayDir || snapped;
-          const moveDist = this.speed * dt;
-          if (dist <= moveDist) {
-            this.x = this.target.x;
-            this.y = this.target.y;
-            this.target = null;
-            this.idleTime = 1000 + Math.random() * 2000;
-            this.displayDir = null;
-            this.pendingDir = null;
-            this.pendingTimerMs = 0;
-          } else {
-            this.x += moveVec.x * moveDist;
-            this.y += moveVec.y * moveDist;
-          }
-          this.facing = moveVec.name;
-        }
-      }
-    } else {
-      this.idleTime -= dtMs;
-      if (this.idleTime <= 0) {
-        // Pick new target constrained to 8-way straight paths
-        const pickTarget = () => {
-          for (let i = 0; i < 8; i++) {
-            const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
-            const maxX = dir.x > 0
-              ? (canvas.width - this.margin - this.x) / dir.x
-              : dir.x < 0
-                ? (this.margin - this.x) / dir.x
-                : Infinity;
-            const maxY = dir.y > 0
-              ? (canvas.height - this.margin - this.y) / dir.y
-              : dir.y < 0
-                ? (this.margin - this.y) / dir.y
-                : Infinity;
-            const maxDist = Math.min(
-              Number.isFinite(maxX) ? maxX : Infinity,
-              Number.isFinite(maxY) ? maxY : Infinity
-            );
-            if (maxDist > this.minLegDist) {
-              const dist = this.minLegDist + Math.random() * (maxDist - this.minLegDist);
-              return {
-                x: this.x + dir.x * dist,
-                y: this.y + dir.y * dist,
-              };
-            }
-          }
-          // Fallback to current spot to wait
-          return null;
-        };
-
-        this.target = pickTarget();
-        this.idleTime = this.target ? 0 : 500;
-      }
-    }
-    
-    // Keep in bounds
-    this.x = Math.max(0, Math.min(canvas.width, this.x));
-    this.y = Math.max(0, Math.min(canvas.height, this.y));
-  }
-
-  draw(context) {
-    const row = this.directionRows[this.facing] ?? this.directionRows.down;
-    
-    const sx = 0;
-    const sy = row * this.frameHeight;
-    const dWidth = this.frameWidth * this.scale;
-    const dHeight = this.frameHeight * this.scale;
-    const dx = Math.round(this.x - dWidth / 2);
-    const dy = Math.round(this.y - dHeight / 2);
-    
-    context.drawImage(
-      this.image, 
-      sx, 
-      sy, 
-      this.frameWidth, 
-      this.frameHeight, 
-      dx, 
-      dy, 
-      dWidth, 
-      dHeight
-    );
+    const face = this.displayDir ? this.displayDir.name : "down";
+    this.sprite.setFrame(rowMap[face] ?? rowMap.down);
   }
 }
 
-function start() {
-  resizeCanvas();
-  const loadImage = (src) =>
-    new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
+class PlayScene extends Phaser.Scene {
+  constructor() {
+    super("play");
+  }
+
+  preload() {
+    this.load.spritesheet("hero", "/assets/sprites/sheet_f_hair_1.png", { frameWidth: 32, frameHeight: 32 });
+    this.load.spritesheet("cat", "/assets/sprites/sheet_cat_black.png", { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet("arrow", "/assets/sprites/arrow_dir_green.png", { frameWidth: 32, frameHeight: 32 });
+  }
+
+  create() {
+    this.cameras.main.setBackgroundColor("#241725");
+    this.cameras.main.setRoundPixels(true);
+
+    this.keys = this.input.keyboard.addKeys({
+      w: Phaser.Input.Keyboard.KeyCodes.W,
+      a: Phaser.Input.Keyboard.KeyCodes.A,
+      s: Phaser.Input.Keyboard.KeyCodes.S,
+      d: Phaser.Input.Keyboard.KeyCodes.D,
     });
 
-  Promise.all([
-    loadImage("/assets/sprites/sheet_f_hair_1.png"),
-    loadImage("/assets/sprites/arrow_dir_green.png"),
-    loadImage("/assets/sprites/sheet_cat_black.png"),
-  ]).then(([sprite, arrow, catSprite]) => {
-    const hero = new Character(sprite, arrow);
-    const cat = new Cat(catSprite);
-    let lastTime = performance.now();
+    this.pointerTarget = null;
+    this.input.on("pointerdown", (pointer) => {
+      const worldPoint = pointer.positionToCamera(this.cameras.main);
+      this.pointerTarget = { x: worldPoint.x, y: worldPoint.y };
+    });
 
-    function loop(now) {
-      const delta = now - lastTime;
-      lastTime = now;
+    this.character = new Character(this, WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
+    this.cat = new Cat(
+      this,
+      Phaser.Math.Between(100, WORLD_WIDTH - 100),
+      Phaser.Math.Between(100, WORLD_HEIGHT - 100)
+    );
+  }
 
-      ctx.fillStyle = "#241725";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+  update(_time, delta) {
+    const clearPointer = () => {
+      this.pointerTarget = null;
+    };
 
-      hero.update(delta, input);
-      cat.update(delta);
+    this.character.update(delta, { keys: this.keys, pointer: this.pointerTarget, clearPointer });
+    this.cat.update(delta);
 
-      // Simple circle collision resolution
-      const dx = hero.x - cat.x;
-      const dy = hero.y - cat.y;
-      const dist = Math.hypot(dx, dy);
-      // Approximate radius as 1/4 of the scaled width
-      const r1 = (hero.frameWidth * hero.scale) * 0.25;
-      const r2 = (cat.frameWidth * cat.scale) * 0.25;
-      const minDist = r1 + r2;
-
-      if (dist < minDist) {
-        const push = minDist - dist;
-        const angle = Math.atan2(dy, dx);
-        // Push hero away from cat
-        hero.x += Math.cos(angle) * push;
-        hero.y += Math.sin(angle) * push;
-      }
-
-      const objects = [hero, cat].sort((a, b) => a.y - b.y);
-      objects.forEach(obj => obj.draw(ctx));
-
-      requestAnimationFrame(loop);
+    // Simple circle collision pushback
+    const dx = this.character.sprite.x - this.cat.sprite.x;
+    const dy = this.character.sprite.y - this.cat.sprite.y;
+    const dist = Math.hypot(dx, dy);
+    const r1 = (this.character.sprite.width * this.character.sprite.scaleX) * 0.25;
+    const r2 = (this.cat.sprite.width * this.cat.sprite.scaleX) * 0.25;
+    const minDist = r1 + r2;
+    if (dist > 0 && dist < minDist) {
+      const push = minDist - dist;
+      const angle = Math.atan2(dy, dx);
+      this.character.sprite.x += Math.cos(angle) * push;
+      this.character.sprite.y += Math.sin(angle) * push;
     }
-
-    loop(lastTime);
-  }).catch((err) => console.error("Failed to load sprites", err));
+  }
 }
 
-start();
-window.addEventListener("resize", resizeCanvas);
+const config = {
+  type: Phaser.AUTO,
+  width: WORLD_WIDTH,
+  height: WORLD_HEIGHT,
+  parent: "game-container",
+  backgroundColor: "#241725",
+  pixelArt: true,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: WORLD_WIDTH,
+    height: WORLD_HEIGHT,
+  },
+  scene: [PlayScene],
+};
+
+new Phaser.Game(config);
