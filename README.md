@@ -1,6 +1,13 @@
-# Pixel Sprite Playground
+# Clara's Game
 
-A simple top-down pixel art playground built with [Phaser 3](https://phaser.io/) and [Vite](https://vitejs.dev/).
+All art created by Clara, bringing a world from her imagination to life on a screen!
+
+# Credits
+
+Art: Clara
+Gameplay: Clara
+Coding: Luke w/AI agent assistance
+
 
 ## Features
 
@@ -48,8 +55,8 @@ npm run build
 ## Assets
 
 *   **Character:** `sheet_f_hair_1.png` (128x128 frames)
-*   **NPC:** `cat_black.png` / `sheet_cat_black.png` (128x128 frames)
+*   **NPC:** `sheet_cat_black.png` (128x128 frames)
 
 ## License
 
-This project is for educational and playground purposes.
+This project is for educational and personal use.
