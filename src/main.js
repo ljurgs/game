@@ -166,9 +166,21 @@ class Character extends MobileObject {
 
     this.speed = 120;
     this.displayDir = { name: "down", x: 0, y: 1 };
+
+    // Direction indicator arrow
+    this.arrow = scene.add.sprite(x, y, "arrowDir", 4);
+    this.arrow.setScale(0.2);
+    this.arrow.setOrigin(0.5, 0.5);
+    this.arrow.setVisible(false);
+    this.arrowDurationMs = 200;
+    this.arrowTimerMs = 0;
+    this.arrowOffsetPx = 6;
+    this.arrow.setDepth(10);
   }
 
   update(dtMs, inputState) {
+    const prevX = this.sprite.x;
+    const prevY = this.sprite.y;
     const dt = dtMs / 1000;
     const dir = { x: 0, y: 0 };
 
@@ -195,10 +207,32 @@ class Character extends MobileObject {
 
     this.clampToWorld();
 
+    // Show arrow briefly in the current facing direction when moving
+    const moved = Math.abs(this.sprite.x - prevX) > 0.01 || Math.abs(this.sprite.y - prevY) > 0.01;
+    if (moved && this.displayDir) {
+      this.arrowTimerMs = this.arrowDurationMs;
+    } else {
+      this.arrowTimerMs = Math.max(0, this.arrowTimerMs - dtMs);
+    }
+
     // Set frame by facing (8-way sheet)
     const facing = this.displayDir || { name: "down", x: 0, y: 1 };
     this.setFacingFrame(facing.name);
-
+    if (this.arrowTimerMs > 0) {
+      const dirVec = this.displayDir || { x: 0, y: 1 };
+      const row = this.rowMap[dirVec.name] ?? this.rowMap.down ?? 4;
+      const charH = this.sprite.height * this.sprite.scaleY;
+      const arrowH = this.arrow.height * this.arrow.scaleY;
+      const offset = charH / 2 + arrowH / 2 + this.arrowOffsetPx;
+      const mag = Math.hypot(dirVec.x, dirVec.y) || 1;
+      const ox = (dirVec.x / mag) * offset;
+      const oy = (dirVec.y / mag) * offset;
+      this.arrow.setFrame(row);
+      this.arrow.setPosition(Math.round(this.sprite.x + ox), Math.round(this.sprite.y + oy));
+      this.arrow.setVisible(true);
+    } else {
+      this.arrow.setVisible(false);
+    }
   }
 }
 
@@ -261,6 +295,7 @@ class PlayScene extends Phaser.Scene {
   preload() {
     this.load.spritesheet("hero", "/assets/sprites/sheet_f_hair_1.png", { frameWidth: 128, frameHeight: 128 });
     this.load.spritesheet("cat", "/assets/sprites/sheet_cat_black.png", { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet("arrowDir", "/assets/sprites/sheet_arrow_dir.png", { frameWidth: 128, frameHeight: 128 });
   }
 
   create() {
