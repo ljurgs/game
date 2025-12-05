@@ -15,6 +15,17 @@ const DIRECTIONS = [
   { name: "upLeft", x: -Math.SQRT1_2, y: -Math.SQRT1_2 },
 ];
 
+const ROW_MAP_8 = {
+  up: 0,
+  upRight: 1,
+  right: 2,
+  downRight: 3,
+  down: 4,
+  downLeft: 5,
+  left: 6,
+  upLeft: 7,
+};
+
 const snapDirection = (dx, dy) => {
   const mag = Math.hypot(dx, dy);
   if (mag < 0.001) return null;
@@ -33,13 +44,14 @@ const snapDirection = (dx, dy) => {
 };
 
 class MobileObject {
-  constructor(scene, spriteKey, frame, scale) {
+  constructor(scene, spriteKey, frame, scale, rowMap = ROW_MAP_8) {
     this.scene = scene;
     this.sprite = scene.add.sprite(0, 0, spriteKey, frame);
     this.sprite.setScale(scale);
     this.sprite.setOrigin(0.5, 0.5);
 
     this.displayDir = null;
+    this.rowMap = rowMap;
   }
 
   setPosition(x, y) {
@@ -63,11 +75,16 @@ class MobileObject {
     this.sprite.x = Phaser.Math.Clamp(this.sprite.x, halfW, WORLD_WIDTH - halfW);
     this.sprite.y = Phaser.Math.Clamp(this.sprite.y, halfH, WORLD_HEIGHT - halfH);
   }
+
+  setFacingFrame(name) {
+    const map = this.rowMap || ROW_MAP_8;
+    this.sprite.setFrame(map[name] ?? map.down ?? 0);
+  }
 }
 
 class Character extends MobileObject {
   constructor(scene, x, y) {
-    super(scene, "hero", 0, 1.5);
+    super(scene, "hero", 4, 0.5);
     this.setPosition(x, y);
 
     this.speed = 120;
@@ -130,17 +147,9 @@ class Character extends MobileObject {
 
     this.clampToWorld();
 
-    // Set frame by facing
+    // Set frame by facing (8-way sheet)
     const facing = this.displayDir || { name: "down", x: 0, y: 1 };
-    const rowIndex =
-      facing.name === "down"
-        ? 0
-        : facing.name === "left"
-        ? 1
-        : facing.name === "right"
-        ? 2
-        : 3;
-    this.sprite.setFrame(rowIndex);
+    this.setFacingFrame(facing.name);
 
   }
 }
@@ -222,18 +231,8 @@ class Cat extends MobileObject {
     this.clampToWorld();
 
     // Face using sheet rows
-    const rowMap = {
-      up: 0,
-      upRight: 1,
-      right: 2,
-      downRight: 3,
-      down: 4,
-      downLeft: 5,
-      left: 6,
-      upLeft: 7,
-    };
     const face = this.displayDir ? this.displayDir.name : "down";
-    this.sprite.setFrame(rowMap[face] ?? rowMap.down);
+    this.setFacingFrame(face);
   }
 }
 
@@ -243,7 +242,7 @@ class PlayScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.spritesheet("hero", "/assets/sprites/sheet_f_hair_1.png", { frameWidth: 32, frameHeight: 32 });
+    this.load.spritesheet("hero", "/assets/sprites/sheet_f_hair_1.png", { frameWidth: 128, frameHeight: 128 });
     this.load.spritesheet("cat", "/assets/sprites/sheet_cat_black.png", { frameWidth: 128, frameHeight: 128 });
   }
 
