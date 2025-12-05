@@ -54,6 +54,7 @@ class MobileObject {
     this.rowMap = rowMap;
     this.pathSegments = [];
     this.speed = 0;
+    this.pathTarget = null;
   }
 
   setPosition(x, y) {
@@ -73,6 +74,7 @@ class MobileObject {
 
   clearPath() {
     this.pathSegments = [];
+    this.pathTarget = null;
   }
 
   // Builds a 2-leg 45-degree path from the current position to the target:
@@ -111,6 +113,7 @@ class MobileObject {
   }
 
   setPathTo(targetX, targetY) {
+    this.pathTarget = { x: targetX, y: targetY };
     this.pathSegments = this.buildPathTo(targetX, targetY);
   }
 
@@ -136,6 +139,9 @@ class MobileObject {
     } else {
       this.sprite.x += snapped.x * step;
       this.sprite.y += snapped.y * step;
+    }
+    if (!this.pathSegments.length) {
+      this.pathTarget = null;
     }
     return true;
   }
@@ -298,6 +304,10 @@ class PlayScene extends Phaser.Scene {
       const angle = Math.atan2(dy, dx);
       this.character.sprite.x += Math.cos(angle) * push;
       this.character.sprite.y += Math.sin(angle) * push;
+      // Rebuild the character's path from its new position so clicks stay accurate
+      if (this.character.pathTarget) {
+        this.character.setPathTo(this.character.pathTarget.x, this.character.pathTarget.y);
+      }
     }
   }
 }
