@@ -52,6 +52,8 @@ class MobileObject {
 
     this.displayDir = null;
     this.rowMap = rowMap;
+    this.pathSegments = [];
+    this.speed = 0;
   }
 
   setPosition(x, y) {
@@ -67,6 +69,75 @@ class MobileObject {
 
   resetDirection() {
     this.displayDir = null;
+  }
+
+  clearPath() {
+    this.pathSegments = [];
+  }
+
+  // Builds a 2-leg 45-degree path from the current position to the target:
+  // first a diagonal leg (if needed), then an axis-aligned leg for the remainder.
+  buildPathTo(targetX, targetY) {
+    const segments = [];
+    const startX = this.sprite.x;
+    const startY = this.sprite.y;
+    const dx = targetX - startX;
+    const dy = targetY - startY;
+    const sign = (v) => (v >= 0 ? 1 : -1);
+
+    let cx = startX;
+    let cy = startY;
+    const diag = Math.min(Math.abs(dx), Math.abs(dy));
+    if (diag > 0) {
+      const dir = snapDirection(sign(dx), sign(dy));
+      cx += sign(dx) * diag;
+      cy += sign(dy) * diag;
+      segments.push({ x: cx, y: cy, dir });
+    }
+
+    const remX = Math.abs(dx) - diag;
+    const remY = Math.abs(dy) - diag;
+    if (remX > 0) {
+      const dir = snapDirection(sign(dx), 0);
+      cx += sign(dx) * remX;
+      segments.push({ x: cx, y: cy, dir });
+    } else if (remY > 0) {
+      const dir = snapDirection(0, sign(dy));
+      cy += sign(dy) * remY;
+      segments.push({ x: cx, y: cy, dir });
+    }
+
+    return segments;
+  }
+
+  setPathTo(targetX, targetY) {
+    this.pathSegments = this.buildPathTo(targetX, targetY);
+  }
+
+  // Advance along the current path segments using the object's speed.
+  advancePath(dtMs) {
+    if (!this.pathSegments.length) return false;
+    const seg = this.pathSegments[0];
+    const dx = seg.x - this.sprite.x;
+    const dy = seg.y - this.sprite.y;
+    const dist = Math.hypot(dx, dy);
+    const snapped = seg.dir || snapDirection(dx, dy);
+    if (!snapped) {
+      this.pathSegments.shift();
+      return false;
+    }
+
+    this.setDirection(snapped);
+    const step = (this.speed * dtMs) / 1000;
+    if (dist <= step) {
+      this.sprite.x = seg.x;
+      this.sprite.y = seg.y;
+      this.pathSegments.shift();
+    } else {
+      this.sprite.x += snapped.x * step;
+      this.sprite.y += snapped.y * step;
+    }
+    return true;
   }
 
   clampToWorld() {
@@ -94,7 +165,6 @@ class Character extends MobileObject {
   update(dtMs, inputState) {
     const dt = dtMs / 1000;
     const dir = { x: 0, y: 0 };
-    let moveDir = null;
 
     if (inputState.keys.w.isDown) dir.y -= 1;
     if (inputState.keys.s.isDown) dir.y += 1;
@@ -104,46 +174,18 @@ class Character extends MobileObject {
     const usingKeys = dir.x !== 0 || dir.y !== 0;
 
     if (usingKeys) {
-      inputState.clearPointer();
+      // Manual keyboard movement overrides any queued path
+      this.clearPath();
       const snapped = snapDirection(dir.x, dir.y);
       if (snapped) {
         this.sprite.x += snapped.x * this.speed * dt;
         this.sprite.y += snapped.y * this.speed * dt;
-        moveDir = snapped;
+        this.setDirection(snapped);
       }
-    } else if (inputState.pointer) {
-      const currentSegment = inputState.pointer.segments[0];
-      if (!currentSegment) {
-        inputState.clearPointer();
-        return;
-      }
-      const dx = currentSegment.x - this.sprite.x;
-      const dy = currentSegment.y - this.sprite.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 2) {
-        inputState.pointer.segments.shift();
-        if (inputState.pointer.segments.length === 0) {
-          inputState.clearPointer();
-        }
-      } else {
-        const snapped = currentSegment.dir;
-        const step = this.speed * dt;
-        if (dist <= step) {
-          this.sprite.x = currentSegment.x;
-          this.sprite.y = currentSegment.y;
-          inputState.pointer.segments.shift();
-          if (inputState.pointer.segments.length === 0) {
-            inputState.clearPointer();
-          }
-        } else {
-          this.sprite.x += snapped.x * step;
-          this.sprite.y += snapped.y * step;
-        }
-        moveDir = snapped;
-      }
+    } else {
+      // Follow queued path segments (from mouse clicks)
+      this.advancePath(dtMs);
     }
-
-    const changed = moveDir ? this.setDirection(moveDir) : false;
 
     this.clampToWorld();
 
@@ -159,72 +201,28 @@ class Cat extends MobileObject {
     super(scene, "cat", 4, 0.5);
     this.setPosition(x, y);
     this.speed = 50;
-    this.target = null;
     this.idleTime = 0;
     this.margin = 50;
     this.minLegDist = 80;
   }
 
   update(dtMs) {
-    const dt = dtMs / 1000;
-
-    if (this.target) {
-      const dx = this.target.x - this.sprite.x;
-      const dy = this.target.y - this.sprite.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist < 5) {
-        this.target = null;
+    // If we have a path, follow it. When done, start a new idle cycle.
+    if (this.pathSegments.length) {
+      this.advancePath(dtMs);
+      if (!this.pathSegments.length) {
         this.idleTime = 1000 + Math.random() * 2000;
-        this.resetDirection();
-      } else {
-        const snapped = snapDirection(dx, dy);
-        if (snapped) {
-          this.setDirection(snapped);
-
-          const moveVec = this.displayDir || snapped;
-          const moveDist = this.speed * dt;
-          if (dist <= moveDist) {
-            this.sprite.x = this.target.x;
-            this.sprite.y = this.target.y;
-            this.target = null;
-            this.idleTime = 1000 + Math.random() * 2000;
-            this.resetDirection();
-          } else {
-            this.sprite.x += moveVec.x * moveDist;
-            this.sprite.y += moveVec.y * moveDist;
-          }
-        }
       }
     } else {
+      // Idle countdown before picking a new random target
       this.idleTime -= dtMs;
       if (this.idleTime <= 0) {
-        const pickTarget = () => {
-          for (let i = 0; i < 8; i++) {
-            const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
-            const maxX =
-              dir.x > 0
-                ? (WORLD_WIDTH - this.margin - this.sprite.x) / dir.x
-                : dir.x < 0
-                ? (this.margin - this.sprite.x) / dir.x
-                : Infinity;
-            const maxY =
-              dir.y > 0
-                ? (WORLD_HEIGHT - this.margin - this.sprite.y) / dir.y
-                : dir.y < 0
-                ? (this.margin - this.sprite.y) / dir.y
-                : Infinity;
-            const maxDist = Math.min(Number.isFinite(maxX) ? maxX : Infinity, Number.isFinite(maxY) ? maxY : Infinity);
-            if (maxDist > this.minLegDist) {
-              const dist = this.minLegDist + Math.random() * (maxDist - this.minLegDist);
-              return { x: this.sprite.x + dir.x * dist, y: this.sprite.y + dir.y * dist };
-            }
-          }
-          return null;
-        };
-
-        this.target = pickTarget();
-        this.idleTime = this.target ? 0 : 500;
+        const target = this.pickRandomTarget();
+        if (target) {
+          this.setPathTo(target.x, target.y);
+        } else {
+          this.idleTime = 500; // retry soon if we failed to find space
+        }
       }
     }
 
@@ -233,6 +231,19 @@ class Cat extends MobileObject {
     // Face using sheet rows
     const face = this.displayDir ? this.displayDir.name : "down";
     this.setFacingFrame(face);
+  }
+
+  // Choose a random point within margins and a minimum travel distance
+  pickRandomTarget() {
+    for (let i = 0; i < 8; i++) {
+      const tx = this.margin + Math.random() * (WORLD_WIDTH - 2 * this.margin);
+      const ty = this.margin + Math.random() * (WORLD_HEIGHT - 2 * this.margin);
+      const dist = Math.hypot(tx - this.sprite.x, ty - this.sprite.y);
+      if (dist >= this.minLegDist) {
+        return { x: tx, y: ty };
+      }
+    }
+    return null;
   }
 }
 
@@ -264,50 +275,15 @@ class PlayScene extends Phaser.Scene {
       Phaser.Math.Between(100, WORLD_HEIGHT - 100)
     );
 
-    this.pointerTarget = null;
+    // Mouse clicks: build a 2-leg 45° path to the click for the character
     this.input.on("pointerdown", (pointer) => {
       const worldPoint = pointer.positionToCamera(this.cameras.main);
-      const startX = this.character.sprite.x;
-      const startY = this.character.sprite.y;
-      const dx = worldPoint.x - startX;
-      const dy = worldPoint.y - startY;
-
-      const sign = (v) => (v >= 0 ? 1 : -1);
-      const segments = [];
-      let cx = startX;
-      let cy = startY;
-
-      const diagAxis = Math.min(Math.abs(dx), Math.abs(dy));
-      if (diagAxis > 0) {
-        const dir = snapDirection(sign(dx), sign(dy));
-        cx += sign(dx) * diagAxis;
-        cy += sign(dy) * diagAxis;
-        segments.push({ x: cx, y: cy, dir });
-      }
-
-      const remX = Math.abs(dx) - diagAxis;
-      const remY = Math.abs(dy) - diagAxis;
-      if (remX > 0) {
-        const dir = snapDirection(sign(dx), 0);
-        cx += sign(dx) * remX;
-        segments.push({ x: cx, y: cy, dir });
-      } else if (remY > 0) {
-        const dir = snapDirection(0, sign(dy));
-        cy += sign(dy) * remY;
-        segments.push({ x: cx, y: cy, dir });
-      }
-
-      if (segments.length === 0) return;
-      this.pointerTarget = { segments };
+      this.character.setPathTo(worldPoint.x, worldPoint.y);
     });
   }
 
   update(_time, delta) {
-    const clearPointer = () => {
-      this.pointerTarget = null;
-    };
-
-    this.character.update(delta, { keys: this.keys, pointer: this.pointerTarget, clearPointer });
+    this.character.update(delta, { keys: this.keys });
     this.cat.update(delta);
 
     // Simple circle collision pushback
